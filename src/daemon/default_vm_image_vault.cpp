@@ -487,6 +487,8 @@ bool mp::DefaultVMImageVault::has_record_for(const std::string& name)
 void mp::DefaultVMImageVault::prune_expired_images()
 {
     std::vector<decltype(prepared_image_records)::key_type> expired_keys;
+    std::lock_guard<decltype(fetch_mutex)> lock{fetch_mutex};
+
     for (const auto& record : prepared_image_records)
     {
         // Expire source images if they aren't persistent and haven't been accessed in 14 days
@@ -512,6 +514,8 @@ void mp::DefaultVMImageVault::prune_expired_images()
 void mp::DefaultVMImageVault::update_images(const FetchType& fetch_type, const PrepareAction& prepare,
                                             const ProgressMonitor& monitor)
 {
+    mpl::log(mpl::Level::debug, category, "Checking for images to update...");
+
     std::vector<decltype(prepared_image_records)::key_type> keys_to_update;
     for (const auto& record : prepared_image_records)
     {
@@ -529,6 +533,14 @@ void mp::DefaultVMImageVault::update_images(const FetchType& fetch_type, const P
     for (const auto& key : keys_to_update)
     {
         const auto& record = prepared_image_records[key];
+        {
+            std::lock_guard<decltype(fetch_mutex)> lock{fetch_mutex};
+            QFileInfo image_file{record.image.image_path};
+            if (image_file.exists())
+                image_file.dir().removeRecursively();
+            prepared_image_records.erase(key);
+            persist_image_records();
+        }
         mpl::log(mpl::Level::info, category, fmt::format("Updating {} source image to latest", record.query.release));
         fetch_image(fetch_type, record.query, prepare, monitor);
     }
